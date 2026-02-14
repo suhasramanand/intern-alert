@@ -8,6 +8,7 @@ try:
 except ImportError:
     _EST = timezone(timedelta(hours=-5))  # EST fallback
 from urllib.request import Request, urlopen, HTTPSHandler, build_opener, HTTPCookieProcessor
+from urllib.error import HTTPError
 from http.cookiejar import CookieJar
 
 # Use certifi on macOS so HTTPS works locally (GitHub runner has certs)
@@ -658,6 +659,13 @@ def main():
         with urlopen(req, timeout=15, context=ssl.create_default_context()) as r:
             pass  # 200 OK
         print(f"Email sent to {to_addr} ({len(to_send)} jobs).")
+    except HTTPError as e:
+        body = (e.fp.read().decode("utf-8", errors="replace") if e.fp else "") or ""
+        print(f"Email failed: {e.code} {e.reason}")
+        if body:
+            print(f"Resend: {body[:500]}")
+        if e.code == 403:
+            print("Tip: With from=onboarding@resend.dev, Resend only allows sending to the email on your Resend account. Set EMAIL_TO to that address, or verify a domain at resend.com/domains and set EMAIL_FROM to an address on that domain.")
     except Exception as e:
         print(f"Email failed: {e}")
 
