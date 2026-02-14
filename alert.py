@@ -44,9 +44,18 @@ def save_seen(seen):
     with open(SEEN_FILE, "w") as f:
         f.write("\n".join(sorted(seen)))
 
-def fetch(url, headers=None):
+def fetch(url, headers=None, timeout=15):
     req = Request(url, headers=headers or {"User-Agent": "Mozilla/5.0"})
-    return _opener.open(req, timeout=15).read().decode("utf-8", errors="replace")
+    return _opener.open(req, timeout=timeout).read().decode("utf-8", errors="replace")
+
+def fetch_with_retry(url, timeout=30, retries=2):
+    for attempt in range(retries + 1):
+        try:
+            return fetch(url, timeout=timeout)
+        except Exception as e:
+            if attempt == retries:
+                raise
+            print(f"  fetch retry {attempt + 1}/{retries} for {url[:50]}...: {e}")
 
 def fetch_airtable_table():
     """Try Airtable readSharedViewData API (often 401); fallback to Playwright below."""
@@ -535,13 +544,13 @@ def main():
         jr_parsed = []
         seen_jr = set()
         for url in JOBRIGHT_MINISITES:
-            html = fetch(url)
+            html = fetch_with_retry(url, timeout=30)
             for j in parse_jobright_next_data(html):
                 if j["id"] not in seen_jr:
                     seen_jr.add(j["id"])
                     jr_parsed.append(j)
         if not jr_parsed:
-            html = fetch(JOBRIGHT_URL)
+            html = fetch_with_retry(JOBRIGHT_URL, timeout=30)
             jr_parsed = parse_jobright(html)
         if not jr_parsed:
             jr_parsed = scrape_jobright_playwright()
