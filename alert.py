@@ -110,6 +110,26 @@ def within_last_2hr(date_str):
     mins, _ = parse_relative_time(date_str)
     return mins is not None and mins <= WINDOW_MINS
 
+def job_in_window(j):
+    """True if job is within last WINDOW_MINS: by relative posted_str ('X hours ago') or by absolute posted datetime.
+    For date-only postings (e.g. intern-list 'February 13, 2026'), treat today and yesterday as in-window."""
+    if within_last_2hr(j.get("posted_str") or ""):
+        return True
+    pt = j.get("posted")
+    if pt is not None:
+        if pt.tzinfo is None:
+            pt = pt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta_sec = (now - pt).total_seconds()
+        if 0 <= delta_sec <= WINDOW_MINS * 60:
+            return True
+        # Date-only (no time): include if posted date is today or yesterday
+        if delta_sec > 0 and pt.hour == 0 and pt.minute == 0:
+            posted_date = pt.date()
+            if posted_date >= (now - timedelta(days=1)).date():
+                return True
+    return False
+
 def format_est(ms):
     """Format Unix timestamp (ms) as Eastern time (EST/EDT)."""
     if ms is None or ms <= 0:
@@ -517,13 +537,13 @@ def main():
         html = fetch(INTERN_LIST_URL)
         parsed = parse_intern_list(html, today_utc)
         for j in parsed:
-            if not within_last_2hr(j["posted_str"]):
+            if not job_in_window(j):
                 continue
             new = j["id"] not in seen
             seen.add(j["id"])
             if new:
                 all_jobs.append((j, "intern-list"))
-        in_window = sum(1 for j in parsed if within_last_2hr(j["posted_str"]))
+        in_window = sum(1 for j in parsed if job_in_window(j))
         if in_window == 0:
             il_pw = scrape_intern_list_playwright()
             for j in il_pw:
