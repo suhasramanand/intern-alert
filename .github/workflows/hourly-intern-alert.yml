@@ -17,7 +17,6 @@ jobs:
           path: .
           key: intern-alert-seen
       - run: python3 alert.py
-        id: alert
         env:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
