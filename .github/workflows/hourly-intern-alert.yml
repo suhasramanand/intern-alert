@@ -14,7 +14,7 @@ jobs:
       - run: pip install -r requirements.txt && playwright install chromium --with-deps
       - uses: actions/cache/restore@v4
         with:
-          path: .
+          path: seen_ids.txt
           key: intern-alert-seen
       - run: python3 alert.py
         env:
