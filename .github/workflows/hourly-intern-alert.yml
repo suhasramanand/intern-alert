@@ -2,7 +2,7 @@ name: Hourly intern alert
 on:
   schedule:
     - cron: "0 * * * *"
-  workflow_dispatch:
+  workflow_dispatch: {}
 jobs:
   alert:
     runs-on: ubuntu-latest
