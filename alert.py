@@ -23,10 +23,9 @@ def fetch(url, headers=None):
     req = Request(url, headers=headers or {"User-Agent": "Mozilla/5.0"})
     return urlopen(req, timeout=15).read().decode("utf-8", errors="replace")
 
-def parse_intern_list(html):
+def parse_intern_list(html, today_utc):
+    """Parse all jobs; caller filters by today_utc."""
     jobs, seen_ids = [], set()
-    # UTC only: intern-list has day granularity, so keep jobs dated today UTC
-    today_utc = datetime.now(timezone.utc).date()
     for m in re.finditer(
         r'href="(/da-intern-list/[^"]+)"[^>]*>.*?<p class="jobtitle">([^<]+)</p><p class="blogtag">([^<]+)</p>.*?<p class="companyname_list">([^<]+)</p>',
         html, re.DOTALL
@@ -40,8 +39,6 @@ def parse_intern_list(html):
             pt = datetime.strptime(date_str.strip(), "%B %d, %Y").replace(tzinfo=timezone.utc)
         except ValueError:
             pt = None
-        if pt and pt.date() != today_utc:
-            continue  # only today UTC (site has day granularity; we can't get last-1hr)
         jobs.append({
             "id": f"il_{job_id}", "title": title.strip(), "company": company.strip(),
             "url": f"https://www.intern-list.com{path}", "posted": pt, "posted_str": date_str.strip()
@@ -70,24 +67,33 @@ def parse_jobright(html):
 def main():
     seen = load_seen()
     all_jobs = []
+    today_utc = datetime.now(timezone.utc).date()
+    print(f"Today UTC: {today_utc}")
 
     try:
         html = fetch(INTERN_LIST_URL)
-        for j in parse_intern_list(html):
+        parsed = parse_intern_list(html, today_utc)
+        # UTC: only jobs dated today
+        for j in parsed:
+            if j["posted"] and j["posted"].date() != today_utc:
+                continue
             new = j["id"] not in seen
             seen.add(j["id"])
             if new:
                 all_jobs.append((j, "intern-list"))
+        print(f"intern-list: {len(parsed)} parsed, {sum(1 for j in parsed if j['posted'] and j['posted'].date() == today_utc)} today UTC, {len([x for x in all_jobs if x[1]=='intern-list'])} new")
     except Exception as e:
         print(f"intern-list fetch error: {e}")
 
     try:
         html = fetch(JOBRIGHT_URL)
-        for j in parse_jobright(html):
+        jr_parsed = parse_jobright(html)
+        for j in jr_parsed:
             new = j["id"] not in seen
             seen.add(j["id"])
             if new:
                 all_jobs.append((j, "jobright"))
+        print(f"jobright: {len(jr_parsed)} parsed (≤1hr), {len([x for x in all_jobs if x[1]=='jobright'])} new")
     except Exception as e:
         print(f"jobright fetch error: {e}")
 
