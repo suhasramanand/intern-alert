@@ -1,0 +1,23 @@
+name: Hourly intern alert
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: .
+          key: intern-alert-seen
+      - run: python3 alert.py
+        env:
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+      - uses: actions/cache/save@v4
+        with:
+          path: seen_ids.txt
+          key: intern-alert-seen
