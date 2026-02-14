@@ -34,6 +34,7 @@ JOBRIGHT_DA_URL = "https://jobright.ai/minisites-jobs/intern/us/data_analysis"
 JOBRIGHT_AIML_URL = "https://jobright.ai/minisites-jobs/intern/us/aiml"
 JOBRIGHT_BA_URL = "https://jobright.ai/minisites-jobs/intern/us/business_analyst"
 JOBRIGHT_MINISITES = (JOBRIGHT_DA_URL, JOBRIGHT_AIML_URL, JOBRIGHT_BA_URL)
+WINDOW_MINS = 120  # include jobs posted in last 2 hours
 def load_seen():
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE) as f:
@@ -105,9 +106,9 @@ def parse_relative_time(text):
         mins = n * 60
     return mins, raw
 
-def within_last_1hr(date_str):
+def within_last_2hr(date_str):
     mins, _ = parse_relative_time(date_str)
-    return mins is not None and mins <= 60
+    return mins is not None and mins <= WINDOW_MINS
 
 def format_est(ms):
     """Format Unix timestamp (ms) as Eastern time (EST/EDT)."""
@@ -173,7 +174,7 @@ def _airtable_date_recent(date_str):
     return False, None
 
 def scrape_airtable_playwright():
-    """Load Airtable embed; include rows with 'X hours ago' ≤1hr, or date column = today/yesterday (all listings are in Airtable)."""
+    """Load Airtable embed; include rows with 'X hours ago' ≤2hr, or date column = today/yesterday (all listings are in Airtable)."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -213,12 +214,12 @@ def scrape_airtable_playwright():
                 company = (cell_list[5] or "")[:100] if len(cell_list) > 5 else ""
                 if not title:
                     continue
-                # Prefer relative time "X hours ago" ≤1hr; else accept date column = today/yesterday (Airtable stores date, we include recent)
+                # Prefer relative time "X hours ago" ≤2hr; else accept date column = today/yesterday (Airtable stores date, we include recent)
                 date_str = ""
                 full_row = " ".join(str(c) for c in cell_list)
                 for chunk in cell_list + [full_row]:
                     mins, matched = parse_relative_time(str(chunk))
-                    if mins is not None and mins <= 60 and matched:
+                    if mins is not None and mins <= WINDOW_MINS and matched:
                         date_str = matched
                         break
                 if not date_str:
@@ -239,7 +240,7 @@ def scrape_airtable_playwright():
     return rows
 
 def parse_airtable(data):
-    """Parse readSharedViewData response into jobs. Expect rows with cell values; filter ≤1hr."""
+    """Parse readSharedViewData response into jobs. Expect rows with cell values; filter ≤2hr."""
     jobs = []
     if not data or "data" not in data:
         return jobs
@@ -279,7 +280,7 @@ def parse_airtable(data):
             date_str = str(date_str) if date_str else ""
             company = str(company)[:100] if company else ""
             mins, matched = parse_relative_time(date_str)
-            if mins is None or mins > 60:
+            if mins is None or mins > WINDOW_MINS:
                 return None
             return {"id": f"at_{abs(hash((title, company, date_str))) % 10**10}", "title": title, "company": company,
                     "url": link if isinstance(link, str) and link.startswith("http") else AIRTABLE_EMBED_URL,
@@ -316,7 +317,7 @@ def parse_intern_list(html, today_utc):
     return jobs
 
 def parse_jobright_next_data(html):
-    """Extract jobs from Jobright minisites __NEXT_DATA__ (initialJobs with postedDate in ms). Keep only ≤1hr."""
+    """Extract jobs from Jobright minisites __NEXT_DATA__ (initialJobs with postedDate in ms). Keep only ≤2hr."""
     jobs = []
     m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html, re.DOTALL)
     if not m:
@@ -328,7 +329,7 @@ def parse_jobright_next_data(html):
     except (json.JSONDecodeError, TypeError):
         return jobs
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    one_hr_ms = 60 * 60 * 1000
+    window_ms = WINDOW_MINS * 60 * 1000
     for j in job_list:
         if not isinstance(j, dict):
             continue
@@ -341,7 +342,7 @@ def parse_jobright_next_data(html):
         except (TypeError, ValueError):
             continue
         diff_ms = now_ms - posted_ms
-        if diff_ms < 0 or diff_ms > one_hr_ms:
+        if diff_ms < 0 or diff_ms > window_ms:
             continue
         mins_ago = diff_ms // (60 * 1000)
         if mins_ago < 60:
@@ -381,7 +382,7 @@ def parse_jobright(html):
         end = min(len(html), m.end() + 120)
         chunk = html[start:end]
         mins, time_str = parse_relative_time(chunk)
-        if mins is not None and mins <= 60 and time_str:
+        if mins is not None and mins <= WINDOW_MINS and time_str:
             title_m = re.search(r"\[([^\]]+)\]", chunk)
             title = title_m.group(1).strip() if title_m else "Data Scientist Intern"
             seen.add(jid)
@@ -392,7 +393,7 @@ def parse_jobright(html):
     return jobs
 
 def scrape_jobright_playwright():
-    """Use headless browser to load Jobright and extract job cards (≤1hr)."""
+    """Use headless browser to load Jobright and extract job cards (≤2hr)."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -432,7 +433,7 @@ def scrape_jobright_playwright():
                 mins, time_str = parse_relative_time(text)
                 if mins is None:
                     mins, time_str = parse_relative_time(parent_text)
-                if mins is None or mins > 60 or not time_str:
+                if mins is None or mins > WINDOW_MINS or not time_str:
                     continue
                 # Prefer title as line that looks like a role (often after "X hours ago" or first line of link text)
                 title = text.replace(time_str, "").strip() if time_str in text else text
@@ -486,7 +487,7 @@ def scrape_intern_list_playwright():
                 text = item.get("text") or ""
                 href = item.get("href") or ""
                 mins, date_str = parse_relative_time(text)
-                if mins is None or mins > 60 or not date_str:
+                if mins is None or mins > WINDOW_MINS or not date_str:
                     continue
                 title = (cells[0] or "")[:200] if cells else ""
                 if not title and "Apply" in text:
@@ -516,13 +517,13 @@ def main():
         html = fetch(INTERN_LIST_URL)
         parsed = parse_intern_list(html, today_utc)
         for j in parsed:
-            if not within_last_1hr(j["posted_str"]):
+            if not within_last_2hr(j["posted_str"]):
                 continue
             new = j["id"] not in seen
             seen.add(j["id"])
             if new:
                 all_jobs.append((j, "intern-list"))
-        in_window = sum(1 for j in parsed if within_last_1hr(j["posted_str"]))
+        in_window = sum(1 for j in parsed if within_last_2hr(j["posted_str"]))
         if in_window == 0:
             il_pw = scrape_intern_list_playwright()
             for j in il_pw:
@@ -531,11 +532,11 @@ def main():
                 if new:
                     all_jobs.append((j, "intern-list"))
             if il_pw:
-                print(f"intern-list: {len(parsed)} parsed (static), {len(il_pw)} ≤1hr from Playwright, {len([x for x in all_jobs if x[1]=='intern-list'])} new")
+                print(f"intern-list: {len(parsed)} parsed (static), {len(il_pw)} ≤2hr from Playwright, {len([x for x in all_jobs if x[1]=='intern-list'])} new")
             else:
-                print(f"intern-list: {len(parsed)} parsed, {in_window} ≤1hr, {len([x for x in all_jobs if x[1]=='intern-list'])} new")
+                print(f"intern-list: {len(parsed)} parsed, {in_window} ≤2hr, {len([x for x in all_jobs if x[1]=='intern-list'])} new")
         else:
-            print(f"intern-list: {len(parsed)} parsed, {in_window} ≤1hr, {len([x for x in all_jobs if x[1]=='intern-list'])} new")
+            print(f"intern-list: {len(parsed)} parsed, {in_window} ≤2hr, {len([x for x in all_jobs if x[1]=='intern-list'])} new")
     except Exception as e:
         print(f"intern-list fetch error: {e}")
 
@@ -559,7 +560,7 @@ def main():
             seen.add(j["id"])
             if new:
                 all_jobs.append((j, "jobright"))
-        print(f"jobright: {len(jr_parsed)} parsed (≤1hr), {len([x for x in all_jobs if x[1]=='jobright'])} new")
+        print(f"jobright: {len(jr_parsed)} parsed (≤2hr), {len([x for x in all_jobs if x[1]=='jobright'])} new")
     except Exception as e:
         print(f"jobright fetch error: {e}")
 
@@ -581,7 +582,7 @@ def main():
                 seen.add(j["id"])
                 if new:
                     all_jobs.append((j, "airtable"))
-            print(f"airtable (Playwright): {len(pw_jobs)} parsed (≤1hr)")
+            print(f"airtable (Playwright): {len(pw_jobs)} parsed (≤2hr)")
     except Exception as e:
         print(f"airtable error: {e}")
 
@@ -607,7 +608,7 @@ def main():
     if not to_send:
         return
 
-    body = f"DS/Analytics/ML internships (new in last 1hr, latest first)\n(Current time: {now_est})\n\n"
+    body = f"DS/Analytics/ML internships (new in last 2hr, latest first)\n(Current time: {now_est})\n\n"
     for j, src in to_send:
         disp = j.get("posted_est") or j["posted_str"]
         body += f"- {j['title']} | {j['company']}\n  Posted: {disp}\n  {j['url']}\n\n"
