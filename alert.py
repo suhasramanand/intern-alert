@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Hourly DS/Analytics/ML internship alerts from intern-list + jobright + Airtable table. Dedup via seen_ids file."""
-import os, re, json, smtplib, ssl
+import os, re, json, ssl
 from datetime import datetime, timezone, timedelta
 try:
     from zoneinfo import ZoneInfo
     _EST = ZoneInfo("America/New_York")
 except ImportError:
     _EST = timezone(timedelta(hours=-5))  # EST fallback
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from urllib.request import Request, urlopen, HTTPSHandler, build_opener, HTTPCookieProcessor
 from http.cookiejar import CookieJar
 
@@ -634,30 +632,32 @@ def main():
         body += f"- {j['title']} | {j['company']}\n  Posted: {disp}\n  {j['url']}\n\n"
 
     to_addr = os.environ.get("EMAIL_TO")
-    from_addr = os.environ.get("EMAIL_FROM") or to_addr
-    password = os.environ.get("EMAIL_APP_PASSWORD")
-    if not to_addr or not password:
-        print("Set EMAIL_TO and EMAIL_APP_PASSWORD. Body:\n" + body)
+    api_key = (os.environ.get("RESEND_API_KEY") or "").strip()
+    from_addr = os.environ.get("EMAIL_FROM") or "Intern Alert <onboarding@resend.dev>"
+    if not to_addr or not api_key:
+        print("Set EMAIL_TO and RESEND_API_KEY in repo Secrets. Body:\n" + body)
         return
 
-    # Gmail app password: use no spaces (e.g. ayta ukmc oejh wceg -> aytaukmcoehjwceg)
-    if password:
-        password = password.replace(" ", "")
-
-    msg = MIMEMultipart()
-    msg["Subject"] = f"Intern alert: {len(to_send)} new DS/ML/Analytics internships"
-    msg["From"] = from_addr
-    msg["To"] = to_addr
-    msg.attach(MIMEText(body, "plain"))
-
+    # Resend API: POST https://api.resend.com/emails
+    payload = json.dumps({
+        "from": from_addr,
+        "to": [to_addr],
+        "subject": f"Intern alert: {len(to_send)} new DS/ML/Analytics internships",
+        "text": body,
+    }).encode("utf-8")
+    req = Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as s:
-            s.login(from_addr, password)
-            s.sendmail(from_addr, to_addr, msg.as_string())
+        with urlopen(req, timeout=15, context=ssl.create_default_context()) as r:
+            pass  # 200 OK
         print(f"Email sent to {to_addr} ({len(to_send)} jobs).")
-    except smtplib.SMTPAuthenticationError as e:
-        print(f"Email failed (Gmail login rejected): {e}")
-        print("Fix: Use a Gmail App Password (not your normal password). Account must have 2FA; create app password at myaccount.google.com/apppasswords. Set EMAIL_TO to that Gmail address and EMAIL_APP_PASSWORD to the 16-char password (no spaces) in repo Secrets.")
     except Exception as e:
         print(f"Email failed: {e}")
 
