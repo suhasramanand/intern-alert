@@ -655,9 +655,11 @@ def main():
             s.login(from_addr, password)
             s.sendmail(from_addr, to_addr, msg.as_string())
         print(f"Email sent to {to_addr} ({len(to_send)} jobs).")
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"Email failed (Gmail login rejected): {e}")
+        print("Fix: Use a Gmail App Password (not your normal password). Account must have 2FA; create app password at myaccount.google.com/apppasswords. Set EMAIL_TO to that Gmail address and EMAIL_APP_PASSWORD to the 16-char password (no spaces) in repo Secrets.")
     except Exception as e:
         print(f"Email failed: {e}")
-        raise
 
 if __name__ == "__main__":
     main()
