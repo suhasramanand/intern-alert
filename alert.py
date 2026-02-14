@@ -25,7 +25,8 @@ def fetch(url, headers=None):
 
 def parse_intern_list(html):
     jobs, seen_ids = [], set()
-    today = datetime.now(timezone.utc).date()
+    # UTC only: intern-list has day granularity, so keep jobs dated today UTC
+    today_utc = datetime.now(timezone.utc).date()
     for m in re.finditer(
         r'href="(/da-intern-list/[^"]+)"[^>]*>.*?<p class="jobtitle">([^<]+)</p><p class="blogtag">([^<]+)</p>.*?<p class="companyname_list">([^<]+)</p>',
         html, re.DOTALL
@@ -39,8 +40,8 @@ def parse_intern_list(html):
             pt = datetime.strptime(date_str.strip(), "%B %d, %Y").replace(tzinfo=timezone.utc)
         except ValueError:
             pt = None
-        if pt and pt.date() < today:
-            continue  # only today's postings (site has day granularity)
+        if pt and pt.date() != today_utc:
+            continue  # only today UTC (site has day granularity; we can't get last-1hr)
         jobs.append({
             "id": f"il_{job_id}", "title": title.strip(), "company": company.strip(),
             "url": f"https://www.intern-list.com{path}", "posted": pt, "posted_str": date_str.strip()
@@ -100,6 +101,14 @@ def main():
     to_send.sort(key=sort_key)
     save_seen(seen)  # always persist so GH cache has a file to save
 
+    # Log to workflow so "Jobs scraped" is visible in Actions run
+    print(f"Jobs scraped this run: {len(all_jobs)} total, {len(to_send)} new to send.")
+    for j, src in to_send[:20]:  # first 20 in log
+        t = j["title"][:60] + ("..." if len(j["title"]) > 60 else "")
+        print(f"  [{src}] {t} | {j['posted_str']}")
+    if len(to_send) > 20:
+        print(f"  ... and {len(to_send) - 20} more (see email).")
+
     if not to_send:
         return
 
@@ -114,15 +123,24 @@ def main():
         print("Set EMAIL_TO and EMAIL_APP_PASSWORD. Body:\n" + body)
         return
 
+    # Gmail app password: use no spaces (e.g. ayta ukmc oejh wceg -> aytaukmcoehjwceg)
+    if password:
+        password = password.replace(" ", "")
+
     msg = MIMEMultipart()
     msg["Subject"] = f"Intern alert: {len(to_send)} new DS/ML/Analytics internships"
     msg["From"] = from_addr
     msg["To"] = to_addr
     msg.attach(MIMEText(body, "plain"))
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as s:
-        s.login(from_addr, password)
-        s.sendmail(from_addr, to_addr, msg.as_string())
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as s:
+            s.login(from_addr, password)
+            s.sendmail(from_addr, to_addr, msg.as_string())
+        print(f"Email sent to {to_addr} ({len(to_send)} jobs).")
+    except Exception as e:
+        print(f"Email failed: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
